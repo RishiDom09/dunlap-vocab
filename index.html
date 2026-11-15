@@ -20,7 +20,7 @@
   h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
   .count { font-size: 15px; color: var(--ink-soft); }
 
-  .modes { display: grid; grid-template-columns: 1fr 1fr 1fr; margin: 24px 0 8px; border-bottom: 2px solid var(--rule); }
+  .modes { display: grid; grid-template-columns: repeat(5, 1fr); margin: 24px 0 8px; border-bottom: 2px solid var(--rule); }
   .modes button { font: inherit; font-size: 17px; font-weight: 700; color: var(--ink-soft); background: none; border: 0; padding: 12px 8px 10px; cursor: pointer; margin-bottom: -2px; border-bottom: 3px solid transparent; }
   .modes button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--blue); }
   button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
@@ -63,9 +63,23 @@
   .word-list b { display: block; }
   .word-list span { color: var(--ink-soft); }
   .hidden { display: none; }
+
+  .card { position: relative; width: 100%; min-height: 240px; perspective: 1200px; cursor: pointer; border: 0; background: none; padding: 0; font: inherit; color: inherit; text-align: center; display: block; }
+  .card-inner { position: relative; width: 100%; min-height: 240px; transition: transform .45s; transform-style: preserve-3d; }
+  .card.flipped .card-inner { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px 24px; background: #fff; border: 2px solid var(--rule); border-radius: 14px; box-shadow: 0 2px 0 var(--rule); }
+  .face.back { transform: rotateY(180deg); border-color: var(--blue); }
+  .face .pos { margin: 0; }
+  .face .definition { margin: 0; }
+  .hint { font-size: 13px; color: var(--ink-soft); margin-top: 8px; }
+  .face .hint { position: absolute; bottom: 12px; left: 0; right: 0; margin: 0; }
+  .new-badge { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--blue); background: var(--blue-soft); border-radius: 999px; padding: 2px 10px; margin-bottom: 4px; }
+  .new-badge.hidden { display: none; }
+  .nav { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .nav .row { margin-top: 0; }
   footer { margin-top: 48px; font-size: 13px; color: var(--ink-soft); }
-  @media (max-width: 480px) { .word { font-size: 32px; } .definition { font-size: 21px; } body { font-size: 17px; } .modes button { font-size: 15px; } }
-  @media (prefers-reduced-motion: reduce) { .bar div { transition: none; } }
+  @media (max-width: 480px) { .word { font-size: 32px; } .definition { font-size: 21px; } body { font-size: 17px; } .modes { grid-template-columns: repeat(3, 1fr); } .modes button { font-size: 15px; padding: 10px 4px 8px; } }
+  @media (prefers-reduced-motion: reduce) { .bar div, .card-inner { transition: none; } }
 </style>
 </head>
 <body>
@@ -78,6 +92,8 @@
   <div class="modes" role="tablist">
     <button role="tab" id="tabRegular" aria-selected="true">Regular</button>
     <button role="tab" id="tabRound" aria-selected="false">Go round</button>
+    <button role="tab" id="tabCards" aria-selected="false">Flashcards</button>
+    <button role="tab" id="tabNew" aria-selected="false">New words</button>
     <button role="tab" id="tabList" aria-selected="false">Word list</button>
   </div>
   <p class="rules" id="rules"></p>
@@ -108,6 +124,32 @@
       <div class="row"><button class="btn hidden" id="next">Next</button></div>
     </div>
     <div id="summary" class="summary hidden"></div>
+  </section>
+
+  <section id="cards" class="hidden">
+    <div class="meta"><span id="cardProg"></span><span id="cardSide"></span></div>
+    <div class="bar"><div id="cardBar"></div></div>
+    <button class="card" id="card" type="button" aria-live="polite" aria-label="Flashcard. Press to flip.">
+      <div class="card-inner">
+        <div class="face front">
+          <span class="new-badge hidden" id="cardBadge">New this week</span>
+          <p class="pos" id="cardPos"></p>
+          <span class="word" id="cardWord"></span>
+          <p class="hint">Tap or press space to flip</p>
+        </div>
+        <div class="face back">
+          <p class="definition" id="cardDef"></p>
+          <p class="hint" id="cardBackHint"></p>
+        </div>
+      </div>
+    </button>
+    <div class="nav">
+      <button class="btn quiet" id="cardPrev">&larr; Prev</button>
+      <div class="row">
+        <button class="btn quiet" id="cardShuffle">Shuffle</button>
+        <button class="btn primary" id="cardNext">Next &rarr;</button>
+      </div>
+    </div>
   </section>
 
   <section id="list" class="hidden">
@@ -226,8 +268,12 @@ let score = 0, missed = [], sentences = [];
 const RULES = {
   regular: "You get a word. Use it correctly in a sentence, then compare with the definition.",
   round: "You get a definition. Type the word it describes. Spelling counts.",
+  cards: "Flip through every word. Front is the word, back is the definition.",
+  newwords: "Just the ten most recently added words, newest last. Flip to check yourself.",
   list: "Every word currently on the list, in alphabetical order."
 };
+const NEW_COUNT = 10;
+const NEW_WORDS = WORDS.slice(-NEW_COUNT);
 
 function shuffle(a) { a = a.slice(); for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; }
 function norm(s) { return s.trim().toLowerCase().replace(/[^a-z]/g, ""); }
@@ -344,17 +390,49 @@ function renderList() {
   });
 }
 
+/* ---------- Flashcards ---------- */
+let cardDeck = [], ci = 0, cardIsNew = false;
+function startCards(list, isNew) {
+  cardIsNew = isNew; cardDeck = isNew ? list.slice() : shuffle(list); ci = 0; showCard();
+}
+function showCard() {
+  const [w, pos, def] = cardDeck[ci];
+  $("card").classList.remove("flipped");
+  $("cardWord").textContent = w; $("cardPos").textContent = pos; $("cardDef").textContent = def;
+  $("cardBackHint").textContent = w;
+  $("cardBadge").classList.toggle("hidden", !cardIsNew);
+  $("cardProg").textContent = (ci + 1) + " of " + cardDeck.length;
+  $("cardSide").textContent = "word";
+  $("cardBar").style.width = Math.round((ci + 1) / cardDeck.length * 100) + "%";
+  $("cardPrev").disabled = ci === 0;
+  $("cardNext").textContent = ci === cardDeck.length - 1 ? "Start over" : "Next \u2192";
+}
+function flipCard() { const f = $("card").classList.toggle("flipped"); $("cardSide").textContent = f ? "definition" : "word"; }
+$("card").onclick = flipCard;
+$("cardNext").onclick = () => { ci = (ci + 1) % cardDeck.length; showCard(); };
+$("cardPrev").onclick = () => { if (ci > 0) { ci--; showCard(); } };
+$("cardShuffle").onclick = () => { cardDeck = shuffle(cardDeck); ci = 0; showCard(); };
+document.addEventListener("keydown", e => {
+  if (mode !== "cards" && mode !== "newwords") return;
+  if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT") return;
+  if (e.key === "ArrowRight") { e.preventDefault(); $("cardNext").click(); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); $("cardPrev").click(); }
+  else if (e.key === " " || e.key === "Enter") { if (e.target.closest(".modes") || e.target.closest(".nav")) return; e.preventDefault(); flipCard(); }
+});
+
 /* ---------- Tabs ---------- */
+const TAB_IDS = { regular: "tabRegular", round: "tabRound", cards: "tabCards", newwords: "tabNew", list: "tabList" };
 function setMode(m) {
   mode = m;
-  ["Regular", "Round", "List"].forEach(t => $("tab" + t).setAttribute("aria-selected", t.toLowerCase() === m));
+  Object.entries(TAB_IDS).forEach(([k, id]) => $(id).setAttribute("aria-selected", k === m));
   $("rules").textContent = RULES[m];
-  if (m === "list") { $("quiz").classList.add("hidden"); $("list").classList.remove("hidden"); renderList(); }
-  else { $("list").classList.add("hidden"); $("quiz").classList.remove("hidden"); start(WORDS); }
+  ["quiz", "cards", "list"].forEach(id => $(id).classList.add("hidden"));
+  if (m === "list") { $("list").classList.remove("hidden"); renderList(); }
+  else if (m === "cards") { $("cards").classList.remove("hidden"); startCards(WORDS, false); }
+  else if (m === "newwords") { $("cards").classList.remove("hidden"); startCards(NEW_WORDS, true); }
+  else { $("quiz").classList.remove("hidden"); start(WORDS); }
 }
-$("tabRegular").onclick = () => setMode("regular");
-$("tabRound").onclick = () => setMode("round");
-$("tabList").onclick = () => setMode("list");
+Object.entries(TAB_IDS).forEach(([k, id]) => $(id).onclick = () => setMode(k));
 
 $("count").textContent = WORDS.length + " words";
 setMode("regular");
